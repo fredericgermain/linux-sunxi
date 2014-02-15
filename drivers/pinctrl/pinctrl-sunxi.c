@@ -13,6 +13,7 @@
 #include <linux/io.h>
 #include <linux/clk.h>
 #include <linux/gpio.h>
+#include <linux/irqchip/chained_irq.h>
 #include <linux/irqdomain.h>
 #include <linux/irqchip/chained_irq.h>
 #include <linux/module.h>
@@ -670,6 +671,8 @@ static void sunxi_pinctrl_irq_handler(unsigned irq, struct irq_desc *desc)
 	struct sunxi_pinctrl *pctl = irq_get_handler_data(irq);
 	const unsigned long reg = readl(pctl->membase + IRQ_STATUS_REG);
 
+	chained_irq_enter(chip, desc);
+
 	/* Clear all interrupts */
 	writel(reg, pctl->membase + IRQ_STATUS_REG);
 
@@ -683,6 +686,7 @@ static void sunxi_pinctrl_irq_handler(unsigned irq, struct irq_desc *desc)
 		}
 		chained_irq_exit(chip, desc);
 	}
+	chained_irq_exit(chip, desc);
 }
 
 static struct of_device_id sunxi_pinctrl_match[] = {
