@@ -90,6 +90,21 @@
 			pinctrl-0 = <&uart0_pins_a>;
 			status = "okay";
 		};
+
+		i2c0: i2c@01c2ac00 {
+			pinctrl-names = "default";
+			pinctrl-0 = <&i2c0_pins_a>;
+			status = "okay";
+
+			axp: axp20x@34 {
+				reg = <0x34>;
+				interrupts = <0>;
+
+				axp,system-power-controller;
+
+				/include/ "x-powers-axp209.dtsi"
+			};
+		};
 	};
 
 	leds {
