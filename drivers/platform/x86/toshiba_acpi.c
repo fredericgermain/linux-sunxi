@@ -58,6 +58,7 @@
 #include <linux/acpi.h>
 #include <linux/dmi.h>
 #include <asm/uaccess.h>
+#include <acpi/video.h>
 
 MODULE_AUTHOR("John Belmonte");
 MODULE_DESCRIPTION("Toshiba Laptop ACPI Extras Driver");
@@ -262,6 +263,17 @@ static const struct key_entry toshiba_acpi_alt_keymap[] = {
 	{ KE_KEY, 0x158, { KEY_WLAN } },
 	{ KE_KEY, 0x13f, { KEY_TOUCHPAD_TOGGLE } },
 	{ KE_END, 0 },
+};
+
+/* Models to use native backlight on */
+static const struct dmi_system_id toshiba_use_native_backlight_dmi[] = {
+	{
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "PORTEGE R830"),
+		},
+	},
+	{}
 };
 
 /* utility
@@ -1778,6 +1790,14 @@ static int toshiba_acpi_setup_backlight(struct toshiba_acpi_dev *dev)
 	int brightness;
 	int ret;
 	bool enabled;
+
+	if (dmi_check_system(toshiba_use_native_backlight_dmi)) {
+		/* Tell acpi-video to not load its backlight interface */
+		acpi_video_dmi_promote_vendor();
+		/* Unregister acpi-video backlight if it got loaded first */
+		acpi_video_unregister_backlight();
+		return 0;
+	}
 
 	/*
 	 * Some machines don't support the backlight methods at all, and
