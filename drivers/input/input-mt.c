@@ -359,8 +359,34 @@ static int input_mt_set_matrix(struct input_mt *mt,
 	return w - mt->red;
 }
 
+static void input_mt_check_slots(struct input_mt *mt,
+				 const struct input_mt_pos *pos, int *slots,
+				 int num_pos)
+{
+	struct input_mt_slot *s;
+	int *p;
+	int i, x, y, d2, dx, dy;
+
+	if (!mt->dmax2)
+		return;
+
+	for (i = 0; i < num_pos; i++) {
+		const struct input_mt_pos *mt_pos = pos + i;
+		p = slots + i;
+		s = mt->slots + *p;
+		x = input_mt_get_value(s, ABS_MT_POSITION_X);
+		y = input_mt_get_value(s, ABS_MT_POSITION_Y);
+		dx = x - mt_pos->x;
+		dy = y - mt_pos->y;
+		d2 = dx * dx + dy * dy;
+		if (d2 >= mt->dmax2)
+			*p = -1;
+	}
+}
+
 static void input_mt_set_slots(struct input_mt *mt,
-			       int *slots, int num_pos)
+			       const struct input_mt_pos *pos, int *slots,
+			       int num_pos)
 {
 	struct input_mt_slot *s;
 	int *w = mt->red, *p;
@@ -375,6 +401,8 @@ static void input_mt_set_slots(struct input_mt *mt,
 			if (*w++ < 0)
 				*p = s - mt->slots;
 	}
+
+	input_mt_check_slots(mt, pos, slots, num_pos);
 
 	for (s = mt->slots; s != mt->slots + mt->num_slots; s++) {
 		if (input_mt_is_active(s))
@@ -415,11 +443,26 @@ int input_mt_assign_slots(struct input_dev *dev, int *slots,
 
 	nrc = input_mt_set_matrix(mt, pos, num_pos);
 	find_reduced_matrix(mt->red, num_pos, nrc / num_pos, nrc);
-	input_mt_set_slots(mt, slots, num_pos);
+	input_mt_set_slots(mt, pos, slots, num_pos);
 
 	return 0;
 }
 EXPORT_SYMBOL(input_mt_assign_slots);
+
+/**
+ * input_mt_set_dmax_tracking() - enhance tracking
+ * @dev: input device with allocated MT slots
+ * @dmax: the max distance between two touches to be considered as the same
+ *
+ * Enhance the in-kernel tracking by providing a maximum distance between
+ * 2 touches to be considered as the same slot.
+ */
+void input_mt_set_dmax_tracking(struct input_dev *dev, int dmax)
+{
+	struct input_mt *mt = dev->mt;
+	mt->dmax2 = dmax * dmax;
+}
+EXPORT_SYMBOL(input_mt_set_dmax_tracking);
 
 /**
  * input_mt_get_slot_by_key() - return slot matching key

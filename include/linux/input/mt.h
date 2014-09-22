@@ -41,6 +41,7 @@ struct input_mt_slot {
  * @flags: input_mt operation flags
  * @frame: increases every time input_mt_sync_frame() is called
  * @red: reduced cost matrix for in-kernel tracking
+ * @dmax2: max distance between 2 points when using in-kernel tracking
  * @slots: array of slots holding current values of tracked contacts
  */
 struct input_mt {
@@ -50,6 +51,7 @@ struct input_mt {
 	unsigned int flags;
 	unsigned int frame;
 	int *red;
+	int dmax2;
 	struct input_mt_slot slots[];
 };
 
@@ -99,6 +101,8 @@ static inline bool input_is_mt_axis(int axis)
 {
 	return axis == ABS_MT_SLOT || input_is_mt_value(axis);
 }
+
+void input_mt_set_dmax_tracking(struct input_dev *dev, int dmax);
 
 void input_mt_report_slot_state(struct input_dev *dev,
 				unsigned int tool_type, bool active);

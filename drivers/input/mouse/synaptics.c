@@ -1077,7 +1077,8 @@ static void set_input_params(struct psmouse *psmouse,
 					ABS_MT_POSITION_Y);
 		/* Image sensors can report per-contact pressure */
 		input_set_abs_params(dev, ABS_MT_PRESSURE, 0, 255, 0, 0);
-		input_mt_init_slots(dev, 2, INPUT_MT_POINTER | INPUT_MT_TRACK);
+		input_mt_init_slots(dev, 4, INPUT_MT_POINTER | INPUT_MT_TRACK);
+		input_mt_set_dmax_tracking(dev, 10 * priv->x_res);
 
 		/* Image sensors can signal 4 and 5 finger clicks */
 		__set_bit(BTN_TOOL_QUADTAP, dev->keybit);
