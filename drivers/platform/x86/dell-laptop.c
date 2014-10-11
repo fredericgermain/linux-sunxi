@@ -31,6 +31,7 @@
 #include <linux/slab.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
+#include <acpi/video.h>
 #include "../../firmware/dcdbas.h"
 
 #define BRIGHTNESS_TOKEN 0x7d
@@ -71,6 +72,7 @@ struct calling_interface_structure {
 
 struct quirk_entry {
 	u8 touchpad_led;
+	u8 use_native_backlight;
 
 	int needs_kbd_timeouts;
 	/*
@@ -84,6 +86,10 @@ static struct quirk_entry *quirks;
 
 static struct quirk_entry quirk_dell_vostro_v130 = {
 	.touchpad_led = 1,
+};
+
+static struct quirk_entry quirk_use_native_backlight = {
+	.use_native_backlight = 1,
 };
 
 static int __init dmi_matched(const struct dmi_system_id *dmi)
@@ -300,6 +306,15 @@ static const struct dmi_system_id dell_quirks[] __initconst = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "XPS13 9333"),
 		},
 		.driver_data = &quirk_dell_xps13_9333,
+	},
+	{
+		.callback = dmi_matched,
+		.ident = "Dell XPS 17",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "XPS L702X"),
+		},
+		.driver_data = &quirk_use_native_backlight,
 	},
 	{ }
 };
@@ -1893,6 +1908,13 @@ static int __init dell_init(void)
 	if (acpi_video_backlight_support())
 		return 0;
 #endif
+
+	if (quirks && quirks->use_native_backlight) {
+		pr_info("Using native backlight driver\n");
+		acpi_video_dmi_promote_vendor();
+		acpi_video_unregister_backlight();
+		return 0;
+	}
 
 	get_buffer();
 	buffer->input[0] = find_token_location(BRIGHTNESS_TOKEN);
