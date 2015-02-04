@@ -590,6 +590,14 @@ static const struct dmi_system_id video_vendor_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "KAV80"),
 		},
 	},
+	{
+		.callback = video_set_backlight_video_vendor,
+		.ident = "Lenovo Ideapad Z570",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "102434U"),
+		},
+	},
 	{}
 };
 
