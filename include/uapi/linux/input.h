@@ -494,10 +494,23 @@ struct input_keymap_entry {
 #define BTN_RIGHT		0x111
 #define BTN_MIDDLE		0x112
 #define BTN_SIDE		0x113
+#define BTN_EXTRA0		0x113 /* Exact usage unknown on HID devices */
 #define BTN_EXTRA		0x114
+#define BTN_EXTRA1		0x114 /* Exact usage unknown on HID devices */
 #define BTN_FORWARD		0x115
+#define BTN_EXTRA2		0x115 /* Exact usage unknown on HID devices */
 #define BTN_BACK		0x116
+#define BTN_EXTRA3		0x116 /* Exact usage unknown on HID devices */
 #define BTN_TASK		0x117
+#define BTN_EXTRA4		0x117 /* Exact usage unknown on HID devices */
+#define BTN_EXTRA5		0x118
+#define BTN_EXTRA6		0x119
+#define BTN_EXTRA7		0x11a
+#define BTN_EXTRA8		0x11b
+#define BTN_EXTRA9		0x11c
+#define BTN_EXTRA10		0x11d
+#define BTN_EXTRA11		0x11e
+#define BTN_EXTRA12		0x11f
 
 #define BTN_JOYSTICK		0x120
 #define BTN_TRIGGER		0x120
