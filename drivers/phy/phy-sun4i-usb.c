@@ -46,6 +46,17 @@
 #define SUNXI_AHB_INCRX_ALIGN_EN	BIT(8)
 #define SUNXI_ULPI_BYPASS_EN		BIT(0)
 
+/* ISCR, Interface Status and Control bits */
+#define SUNXI_ISCR_ID_PULLUP_EN		(1 << 17)
+#define SUNXI_ISCR_DPDM_PULLUP_EN	(1 << 16)
+/* sunxi has the phy id/vbus pins not connected, so we use the force bits */
+#define SUNXI_ISCR_FORCE_ID_MASK	(3 << 14)
+#define SUNXI_ISCR_FORCE_ID_LOW		(2 << 14)
+#define SUNXI_ISCR_FORCE_ID_HIGH	(3 << 14)
+#define SUNXI_ISCR_FORCE_VBUS_MASK	(3 << 12)
+#define SUNXI_ISCR_FORCE_VBUS_LOW	(2 << 12)
+#define SUNXI_ISCR_FORCE_VBUS_HIGH	(3 << 12)
+
 /* Common Control Bits for Both PHYs */
 #define PHY_PLL_BW			0x03
 #define PHY_RES45_CAL_EN		0x0c
@@ -78,6 +89,44 @@ struct sun4i_usb_phy_data {
 
 #define to_sun4i_usb_phy_data(phy) \
 	container_of((phy), struct sun4i_usb_phy_data, phys[(phy)->index])
+
+static void sun4i_usb_phy_update_iscr(struct phy *_phy, u32 clr, u32 set)
+{
+	struct sun4i_usb_phy *phy = phy_get_drvdata(_phy);
+	struct sun4i_usb_phy_data *data = to_sun4i_usb_phy_data(phy);
+	u32 iscr;
+
+	iscr = readl(data->base + REG_ISCR);
+	iscr &= ~clr;
+	iscr |= set;
+	writel(iscr, data->base + REG_ISCR);
+}
+
+void sun4i_usb_phy_set_id_detect(struct phy *phy, bool val)
+{
+	u32 reg_val;
+
+	if (val)
+		reg_val = SUNXI_ISCR_FORCE_ID_HIGH;
+	else
+		reg_val = SUNXI_ISCR_FORCE_ID_LOW;
+
+	sun4i_usb_phy_update_iscr(phy, SUNXI_ISCR_FORCE_ID_MASK, reg_val);
+}
+EXPORT_SYMBOL(sun4i_usb_phy_set_id_detect);
+
+void sun4i_usb_phy_set_vbus_detect(struct phy *phy, bool val)
+{
+	u32 reg_val;
+
+	if (val)
+		reg_val = SUNXI_ISCR_FORCE_VBUS_HIGH;
+	else
+		reg_val = SUNXI_ISCR_FORCE_VBUS_LOW;
+
+	sun4i_usb_phy_update_iscr(phy, SUNXI_ISCR_FORCE_VBUS_MASK, reg_val);
+}
+EXPORT_SYMBOL(sun4i_usb_phy_set_vbus_detect);
 
 static void sun4i_usb_phy_write(struct sun4i_usb_phy *phy, u32 addr, u32 data,
 				int len)
@@ -169,12 +218,24 @@ static int sun4i_usb_phy_init(struct phy *_phy)
 
 	sun4i_usb_phy_passby(phy, 1);
 
+	/* Enable pull-ups */
+	if (phy->index == 0) {
+		sun4i_usb_phy_update_iscr(_phy, 0, SUNXI_ISCR_DPDM_PULLUP_EN);
+		sun4i_usb_phy_update_iscr(_phy, 0, SUNXI_ISCR_ID_PULLUP_EN);
+	}
+
 	return 0;
 }
 
 static int sun4i_usb_phy_exit(struct phy *_phy)
 {
 	struct sun4i_usb_phy *phy = phy_get_drvdata(_phy);
+
+	/* Disable pull-ups */
+	if (phy->index == 0) {
+		sun4i_usb_phy_update_iscr(_phy, SUNXI_ISCR_DPDM_PULLUP_EN, 0);
+		sun4i_usb_phy_update_iscr(_phy, SUNXI_ISCR_ID_PULLUP_EN, 0);
+	}
 
 	sun4i_usb_phy_passby(phy, 0);
 	reset_control_assert(phy->reset);
