@@ -26,7 +26,6 @@
 #include <linux/mfd/syscon/sun4i-sc.h>
 #include <linux/module.h>
 #include <linux/of.h>
-#include <linux/of_gpio.h>
 #include <linux/phy/phy-sun4i-usb.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
@@ -35,13 +34,6 @@
 #include <linux/usb/usb_phy_generic.h>
 #include <linux/workqueue.h>
 #include "musb_core.h"
-
-/*
- * Note do not raise the debounce time, we must report Vusb high within 100ms
- * of a session being requested otherwise we get Vbus errors
- */
-#define SUNXI_MUSB_DEBOUNCE_TIME		msecs_to_jiffies(50)
-#define SUNXI_MUSB_POLL_TIME			msecs_to_jiffies(250)
 
 /*
  * Register offsets, note sunxi musb has a different layout then most
@@ -74,6 +66,11 @@
 /* VEND0 bits */
 #define SUNXI_MUSB_VEND0_PIO_MODE		0
 
+/* flags */
+#define SUNXI_MUSB_FL_ENABLED			0
+#define SUNXI_MUSB_FL_VBUS_ON			1
+#define SUNXI_MUSB_FL_PHY_ON			2
+
 /* Our read/write methods need access and do not get passed in a musb ref :| */
 struct musb *sunxi_musb;
 
@@ -85,104 +82,39 @@ struct sunxi_glue {
 	struct phy		*phy;
 	struct platform_device	*usb_phy;
 	struct usb_phy		*xceiv;
-	struct gpio_desc	*id_det_gpio;
-	struct gpio_desc	*vbus_det_gpio;
-	int			id_det_irq;
-	int			vbus_det_irq;
-	u8			id_det;
-	u8			vbus_det;
-	u8			vbus_on;
-	u8			enabled;
-	struct delayed_work	detect;
+	unsigned long		flags;
+	struct work_struct	vbus_work;
 };
 
-/* Called with musb locked */
+/* phy_power_on / off may sleep, so we use a workqueue for it */
+static void sunxi_musb_vbus_work(struct work_struct *work)
+{
+	struct sunxi_glue *glue =
+		container_of(work, struct sunxi_glue, vbus_work);
+	bool vbus_on = test_bit(SUNXI_MUSB_FL_VBUS_ON, &glue->flags);	
+	bool phy_on = test_bit(SUNXI_MUSB_FL_PHY_ON, &glue->flags);	
+
+	if (phy_on != vbus_on) {
+		if (vbus_on) {
+			phy_power_on(glue->phy);
+			set_bit(SUNXI_MUSB_FL_PHY_ON, &glue->flags);
+		} else {
+			phy_power_off(glue->phy);
+			clear_bit(SUNXI_MUSB_FL_PHY_ON, &glue->flags);
+		}
+	}
+}
+
 static void sunxi_musb_set_vbus(struct musb *musb, int is_on)
 {
 	struct sunxi_glue *glue = dev_get_drvdata(musb->controller->parent);
 
-	if (is_on) {
-		/* Turn on Vbus only if we don't have an ext. Vbus */
-		if (!glue->vbus_on && !glue->vbus_det) {
-			phy_power_on(glue->phy);
-			glue->vbus_on = 1;
-		}
-	} else {
-		if (glue->vbus_on) {
-			phy_power_off(glue->phy);
-			glue->vbus_on = 0;
-		}
-	}
-}
+	if (is_on)
+		set_bit(SUNXI_MUSB_FL_VBUS_ON, &glue->flags);
+	else
+		clear_bit(SUNXI_MUSB_FL_VBUS_ON, &glue->flags);
 
-static void sunxi_musb_id_vbus_det_scan(struct work_struct *work)
-{
-	struct sunxi_glue *glue =
-		container_of(work, struct sunxi_glue, detect.work);
-	struct musb *musb = dev_get_drvdata(&glue->musb->dev);
-	u8 id_det, vbus_det, devctl, set_vbus = 0, rescan = 0;
-	unsigned long delay, flags;
-
-	id_det = gpiod_get_value_cansleep(glue->id_det_gpio);
-	vbus_det = gpiod_get_value_cansleep(glue->vbus_det_gpio);
-
-	spin_lock_irqsave(&musb->lock, flags);
-
-	if (!glue->enabled) {
-		spin_unlock_irqrestore(&musb->lock, flags);
-		return;
-	}
-
-	if (vbus_det != glue->vbus_det) {
-		sun4i_usb_phy_set_vbus_detect(glue->phy, vbus_det);
-		glue->vbus_det = vbus_det;
-	}
-
-	if (id_det != glue->id_det) {
-		sun4i_usb_phy_set_id_detect(glue->phy, id_det);
-		devctl = readb(musb->mregs + SUNXI_MUSB_DEVCTL);
-		if (id_det == 0) {
-			sunxi_musb_set_vbus(musb, 1);
-			set_vbus = 1;
-			musb->xceiv->otg->default_a = 1;
-			musb->xceiv->otg->state = OTG_STATE_A_IDLE;
-			MUSB_HST_MODE(musb);
-			devctl |= MUSB_DEVCTL_SESSION;
-		} else {
-			sunxi_musb_set_vbus(musb, 0);
-			/*
-			 * Vbus typically slowly discharges, sometimes this
-			 * causes the Vbus gpio to not trigger an edge irq
-			 * on Vbus off, so force a rescan.
-			 */
-			rescan = 1;
-			musb->xceiv->otg->default_a = 0;
-			musb->xceiv->otg->state = OTG_STATE_B_IDLE;
-			MUSB_DEV_MODE(musb);
-			devctl &= ~MUSB_DEVCTL_SESSION;
-		}
-		writeb(devctl, musb->mregs + SUNXI_MUSB_DEVCTL);
-		glue->id_det = id_det;
-	}
-
-	/* If one of the pins does not support irqs, we must poll */
-	if (glue->id_det_irq < 0 || glue->vbus_det_irq < 0 || rescan) {
-		delay = set_vbus ? SUNXI_MUSB_DEBOUNCE_TIME :
-				   SUNXI_MUSB_POLL_TIME;
-		queue_delayed_work(system_wq, &glue->detect, delay);
-	}
-
-	spin_unlock_irqrestore(&musb->lock, flags);
-}
-
-static irqreturn_t sunxi_musb_id_vbus_det_irq(int irq, void *dev_id)
-{
-	struct sunxi_glue *glue = dev_id;
-
-	/* vbus or id changed, let the pins settle and then scan them */
-	queue_delayed_work(system_wq, &glue->detect, SUNXI_MUSB_DEBOUNCE_TIME);
-
-	return IRQ_HANDLED;
+	schedule_work(&glue->vbus_work);
 }
 
 static irqreturn_t sunxi_musb_interrupt(int irq, void *__hci)
@@ -221,6 +153,28 @@ static irqreturn_t sunxi_musb_interrupt(int irq, void *__hci)
 	return IRQ_HANDLED;
 }
 
+void sunxi_musb_id_change(int id)
+{
+	struct musb *musb = sunxi_musb;
+	u8 devctl;
+
+	devctl = readb(musb->mregs + SUNXI_MUSB_DEVCTL);
+	if (id == 0) {
+		sunxi_musb_set_vbus(musb, 1);
+		musb->xceiv->otg->default_a = 1;
+		musb->xceiv->otg->state = OTG_STATE_A_IDLE;
+		MUSB_HST_MODE(musb);
+		devctl |= MUSB_DEVCTL_SESSION;
+	} else {
+		sunxi_musb_set_vbus(musb, 0);
+		musb->xceiv->otg->default_a = 0;
+		musb->xceiv->otg->state = OTG_STATE_B_IDLE;
+		MUSB_DEV_MODE(musb);
+		devctl &= ~MUSB_DEVCTL_SESSION;
+	}
+	writeb(devctl, musb->mregs + SUNXI_MUSB_DEVCTL);
+}
+
 static int sunxi_musb_init(struct musb *musb)
 {
 	struct sunxi_glue *glue = dev_get_drvdata(musb->controller->parent);
@@ -245,21 +199,10 @@ static int sunxi_musb_init(struct musb *musb)
 		return ret;
 	}
 
-	musb->isr = sunxi_musb_interrupt;
-
-	switch (musb->port_mode) {
-	case MUSB_PORT_MODE_HOST:
-		sun4i_usb_phy_set_id_detect(glue->phy, 0);
-		sun4i_usb_phy_set_vbus_detect(glue->phy, 1);
+	if (musb->port_mode == MUSB_PORT_MODE_HOST)
 		sunxi_musb_set_vbus(musb, 1);
-		break;
-	case MUSB_PORT_MODE_DUAL_ROLE:
-		sun4i_usb_phy_set_id_detect(glue->phy, 1);
-		sun4i_usb_phy_set_vbus_detect(glue->phy, 0);
-		glue->id_det = 1;
-		glue->vbus_det = 0;
-		break;
-	}
+
+	musb->isr = sunxi_musb_interrupt;
 
 	/* Stop the musb-core from doing runtime pm (not supported on sunxi) */
 	pm_runtime_get(musb->controller);
@@ -272,10 +215,8 @@ static int sunxi_musb_exit(struct musb *musb)
 	struct sunxi_glue *glue = dev_get_drvdata(musb->controller->parent);
 
 	pm_runtime_put(musb->controller);
-	cancel_delayed_work_sync(&glue->detect);
 	clk_disable_unprepare(glue->clk);
-	if (glue->vbus_on)
-		phy_power_off(glue->phy);
+	sunxi_musb_set_vbus(musb, 0);
 	phy_exit(glue->phy);
 
 	return 0;
@@ -285,45 +226,15 @@ static int sunxi_musb_exit(struct musb *musb)
 static void sunxi_musb_enable(struct musb *musb)
 {
 	struct sunxi_glue *glue = dev_get_drvdata(musb->controller->parent);
-	int ret;
 
 	/* musb_core does not call us in a balanced manner */
-	if (glue->enabled)
+	if (test_and_set_bit(SUNXI_MUSB_FL_ENABLED, &glue->flags))
 		return;
-
-	glue->enabled = 1;
 
 	writeb(SUNXI_MUSB_VEND0_PIO_MODE, musb->mregs + SUNXI_MUSB_VEND0);
 
 	if (musb->port_mode != MUSB_PORT_MODE_DUAL_ROLE)
 		return;
-
-	if (glue->id_det_irq >= 0) {
-		ret = devm_request_irq(glue->dev, glue->id_det_irq,
-				sunxi_musb_id_vbus_det_irq,
-				IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
-				"musb-id-det", glue);
-		if (ret) {
-			dev_err(glue->dev,
-				"Error requesting id-det-irq: %d\n", ret);
-			glue->id_det_irq = -1;
-		}
-	}
-
-	if (glue->vbus_det_irq >= 0) {
-		ret = devm_request_irq(glue->dev, glue->vbus_det_irq,
-				sunxi_musb_id_vbus_det_irq,
-				IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
-				"musb-vbus-det", glue);
-		if (ret) {
-			dev_err(glue->dev,
-				"Error requesting vbus-det-irq: %d\n", ret);
-			glue->vbus_det_irq = -1;
-		}
-	}
-
-	/* Scan current status / start scanning */
-	queue_delayed_work(system_wq, &glue->detect, 0);
 }
 
 /* Called with musb locked */
@@ -332,19 +243,11 @@ static void sunxi_musb_disable(struct musb *musb)
 	struct sunxi_glue *glue = dev_get_drvdata(musb->controller->parent);
 
 	/* musb_core does not call us in a balanced manner */
-	if (glue->enabled == 0)
+	if (!test_and_clear_bit(SUNXI_MUSB_FL_ENABLED, &glue->flags))
 		return;
-
-	glue->enabled = 0;
 
 	if (musb->port_mode != MUSB_PORT_MODE_DUAL_ROLE)
 		return;
-
-	if (glue->id_det_irq >= 0)
-		free_irq(glue->id_det_irq, glue);
-
-	if (glue->vbus_det_irq >= 0)
-		free_irq(glue->vbus_det_irq, glue);
 }
 
 /*
@@ -632,7 +535,7 @@ static int sunxi_musb_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	glue->dev = &pdev->dev;
-	INIT_DELAYED_WORK(&glue->detect, sunxi_musb_id_vbus_det_scan);
+	INIT_WORK(&glue->vbus_work, sunxi_musb_vbus_work);
 
 	glue->sc = syscon_regmap_lookup_by_phandle(np, "syscons");
 	if (IS_ERR(glue->sc)) {
@@ -646,25 +549,6 @@ static int sunxi_musb_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Error getting clock: %ld\n",
 			PTR_ERR(glue->clk));
 		return PTR_ERR(glue->clk);
-	}
-
-	if (pdata.mode == MUSB_PORT_MODE_DUAL_ROLE) {
-		glue->id_det_gpio =
-			devm_gpiod_get(&pdev->dev, "id_det", GPIOD_IN);
-		if (IS_ERR(glue->id_det_gpio)) {
-			dev_err(&pdev->dev, "Error getting id_det gpio\n");
-			return PTR_ERR(glue->id_det_gpio);
-		}
-
-		glue->vbus_det_gpio =
-			devm_gpiod_get(&pdev->dev, "vbus_det", GPIOD_IN);
-		if (IS_ERR(glue->vbus_det_gpio)) {
-			dev_err(&pdev->dev, "Error getting vbus_det gpio\n");
-			return PTR_ERR(glue->vbus_det_gpio);
-		}
-
-		glue->id_det_irq = gpiod_to_irq(glue->id_det_gpio);
-		glue->vbus_det_irq = gpiod_to_irq(glue->vbus_det_gpio);
 	}
 
 	glue->phy = devm_phy_get(&pdev->dev, "usb");
@@ -720,6 +604,7 @@ static int sunxi_musb_remove(struct platform_device *pdev)
 	struct sunxi_glue *glue = platform_get_drvdata(pdev);
 	struct platform_device *usb_phy = glue->usb_phy;
 
+	cancel_work_sync(&glue->vbus_work);
 	platform_device_unregister(glue->musb); /* Frees glue ! */
 	usb_phy_generic_unregister(usb_phy);
 
