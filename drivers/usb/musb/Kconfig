@@ -66,6 +66,7 @@ config USB_MUSB_SUNXI
 	tristate "Allwinner (sunxi)"
 	depends on ARCH_SUNXI
 	depends on NOP_USB_XCEIV
+	depends on PHY_SUN4I_USB
 	select EXTCON
 	select GENERIC_PHY
 	select SUNXI_SRAM

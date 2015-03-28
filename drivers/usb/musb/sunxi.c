@@ -24,6 +24,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/phy/phy-sun4i-usb.h>
 #include <linux/platform_device.h>
 #include <linux/soc/sunxi/sunxi_sram.h>
 #include <linux/usb/musb.h>
@@ -145,6 +146,20 @@ static void sunxi_musb_set_vbus(struct musb *musb, int is_on)
 		clear_bit(SUNXI_MUSB_FL_VBUS_ON, &glue->flags);
 
 	schedule_work(&glue->work);
+}
+
+void sunxi_musb_pre_root_reset_end(struct musb *musb)
+{
+	struct sunxi_glue *glue = dev_get_drvdata(musb->controller->parent);
+
+	sun4i_usb_phy_set_squelch_detect(glue->phy, false);
+}
+
+void sunxi_musb_post_root_reset_end(struct musb *musb)
+{
+	struct sunxi_glue *glue = dev_get_drvdata(musb->controller->parent);
+
+	sun4i_usb_phy_set_squelch_detect(glue->phy, true);
 }
 
 static irqreturn_t sunxi_musb_interrupt(int irq, void *__hci)
@@ -515,6 +530,8 @@ static const struct musb_platform_ops sunxi_musb_ops = {
 	.readw		= sunxi_musb_readw,
 	.writew		= sunxi_musb_writew,
 	.set_vbus	= sunxi_musb_set_vbus,
+	.pre_root_reset_end = sunxi_musb_pre_root_reset_end,
+	.post_root_reset_end = sunxi_musb_post_root_reset_end,
 };
 
 /* Allwinner OTG supports up to 5 endpoints */
