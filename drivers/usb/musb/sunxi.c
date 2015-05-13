@@ -252,6 +252,8 @@ static int sunxi_musb_init(struct musb *musb)
 		if (ret)
 			goto error_phy_exit;
 		set_bit(SUNXI_MUSB_FL_PHY_ON, &glue->flags);
+		/* Stop musb work from turning vbus off again */
+		set_bit(SUNXI_MUSB_FL_VBUS_ON, &glue->flags);
 	}
 
 	musb->isr = sunxi_musb_interrupt;
