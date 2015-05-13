@@ -98,6 +98,7 @@ struct sun4i_usb_phy_data {
 		struct regulator *vbus;
 		struct reset_control *reset;
 		struct clk *clk;
+		bool regulator_on;
 		int index;
 	} phys[MAX_PHYS];
 	/* phy0 / otg related variables */
@@ -286,7 +287,7 @@ static int sun4i_usb_phy_power_on(struct phy *_phy)
 	struct sun4i_usb_phy_data *data = to_sun4i_usb_phy_data(phy);
 	int ret;
 
-	if (!phy->vbus)
+	if (!phy->vbus || phy->regulator_on)
 		return 0;
 
 	/* For phy0 only turn on Vbus if we don't have an ext. Vbus */
@@ -296,6 +297,8 @@ static int sun4i_usb_phy_power_on(struct phy *_phy)
 	ret = regulator_enable(phy->vbus);
 	if (ret)
 		return ret;
+
+	phy->regulator_on = true;
 
 	/* We must report Vbus high within OTG_TIME_A_WAIT_VRISE msec. */
 	if (phy->index == 0 && data->phy0_poll)
@@ -309,10 +312,11 @@ static int sun4i_usb_phy_power_off(struct phy *_phy)
 	struct sun4i_usb_phy *phy = phy_get_drvdata(_phy);
 	struct sun4i_usb_phy_data *data = to_sun4i_usb_phy_data(phy);
 
-	if (!phy->vbus)
+	if (!phy->vbus || !phy->regulator_on)
 		return 0;
 
 	regulator_disable(phy->vbus);
+	phy->regulator_on = false;
 
 	/*
 	 * phy0 vbus typically slowly discharges, sometimes this causes the
