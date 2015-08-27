@@ -409,12 +409,13 @@ static void sunxi_codec_init(struct sunxi_priv *priv)
 		regmap_update_bits(priv->regmap, SUNXI_DAC_DPC, 0x3F << SUNXI_DAC_DPC_DVOL, 0 << SUNXI_DAC_DPC_DVOL);
 
 	regmap_update_bits(priv->regmap, SUNXI_DAC_FIFOC, 3 << SUNXI_DAC_FIFOC_DRQ_CLR_CNT, 3 << SUNXI_DAC_FIFOC_DRQ_CLR_CNT);
-
+#if 0
 	/* set volume */ /* TODO: is A10A inverted? */
 	if (priv->revision == SUN4IA)
 		regmap_update_bits(priv->regmap, SUNXI_DAC_ACTL, 0x3f << SUNXI_DAC_ACTL_PA_VOL, 1 << SUNXI_DAC_ACTL_PA_VOL);
 	else
 		regmap_update_bits(priv->regmap, SUNXI_DAC_ACTL, 0x3f << SUNXI_DAC_ACTL_PA_VOL, 0x3b << SUNXI_DAC_ACTL_PA_VOL);
+#endif
 }
 
 static int sunxi_codec_startup(struct snd_pcm_substream *substream,
