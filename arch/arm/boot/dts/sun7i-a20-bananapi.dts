@@ -277,3 +277,10 @@
 	usb2_vbus-supply = <&reg_usb2_vbus>;
 	status = "okay";
 };
+
+&codec {
+        routing =
+                "Headphone Jack", "HP Left",
+                "Headphone Jack", "HP Right";
+        status = "okay";
+};
